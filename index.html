@@ -1,0 +1,491 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Orbit Flip</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<script src="https://www.youtube.com/game_api/v1"></script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Righteous&family=Outfit:wght@400;600&display=swap">
+<style>
+/* Single dark arcade look by choice: one canvas full-screen, HUD on top, panels centered */
+:root{
+  --bg:#0b0a1f; --ink:#f4f1ff; --muted:#9a93c9; --lane:#2a2560; --tile:#17143a;
+  --player:#ffd23f; --hazard:#ff3d7f; --gem:#3df5d0;
+  --display:"Righteous","Trebuchet MS",sans-serif; --body:"Outfit",system-ui,sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);overflow:hidden;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+[hidden]{display:none!important}
+canvas{display:block}
+#c{width:100%;height:100%}
+.hud{position:fixed;inset:0 0 auto;display:flex;justify-content:space-between;align-items:center;padding:calc(12px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 0 max(16px,env(safe-area-inset-left,0px));pointer-events:none;font-variant-numeric:tabular-nums;z-index:5}
+.score{font-family:var(--display);font-size:2.4rem;line-height:1}
+.best{font-size:.8rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.coins{font-family:var(--display);color:var(--player);font-size:1.2rem}
+.panel{position:fixed;inset:0;display:grid;place-items:center;background:color-mix(in srgb,var(--bg) 78%,transparent);padding:0 max(16px,env(safe-area-inset-right,0px)) 0 max(16px,env(safe-area-inset-left,0px))}
+.card{display:grid;gap:14px;justify-items:center;text-align:center;max-width:320px;width:100%}
+h1{font-family:var(--display);font-size:3rem;margin:0;font-weight:400;letter-spacing:.02em;text-wrap:balance}
+h1 span{color:var(--player)}
+h2{font-family:var(--display);font-weight:400;font-size:1.8rem;margin:0}
+p{margin:0;color:var(--muted);line-height:1.5}
+.big{font-family:var(--display);font-size:4rem;line-height:1;color:var(--player)}
+button{font:600 1.05rem var(--body);border:0;border-radius:999px;padding:14px 22px;width:100%;cursor:pointer;color:var(--bg);background:var(--player)}
+button.ghost{background:transparent;color:var(--ink);border:2px solid var(--lane)}
+button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
+.tag{font-size:.75rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.earned{font-family:var(--display);color:var(--player)}
+
+/* skins shop */
+#shop{background:var(--bg);place-items:start center;overflow-y:auto;padding-block:calc(64px + env(safe-area-inset-top,0px)) 24px;z-index:6}
+#shop .card{max-width:380px}
+.wallet{font-family:var(--display);font-size:1.4rem;color:var(--player)}
+.hero{width:96px;height:96px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:100%}
+.tile{display:grid;justify-items:center;gap:4px;padding:10px 4px 8px;border-radius:16px;background:var(--tile);border:2px solid transparent;color:var(--ink);font:600 .85rem var(--body);width:auto}
+.tile canvas{width:48px;height:48px}
+.tile canvas.bgprev{width:64px;height:64px;border-radius:12px}
+.tile .price{font-size:.8rem;color:var(--player);font-variant-numeric:tabular-nums}
+.tile.owned .price{color:var(--muted)}
+.tile.on{border-color:var(--player)}
+.tile.on .price{color:var(--player)}
+.tile.locked{opacity:.55}
+.tile.nope{animation:nope .3s}
+@keyframes nope{25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
+.sect{justify-self:start;margin-top:6px}
+.toast{min-height:1.5em;color:var(--hazard);font-size:.9rem}
+@media (prefers-reduced-motion:reduce){.tile.nope{animation:none}}
+</style>
+</head><body>
+
+<canvas id="c"></canvas>
+
+<div class="hud">
+  <div><div class="score" id="score">0</div><div class="best" id="best">Best 0</div></div>
+  <div class="coins" id="coins">● 0</div>
+</div>
+
+<div class="panel" id="start">
+  <div class="card">
+    <h1>Orbit <span>Flip</span></h1>
+    <p>Tap anywhere to jump between the two rings. Dodge the pink spikes, grab the green gems. Every point goes to your wallet.</p>
+    <button id="play">Tap to play</button>
+    <button class="ghost" id="skins1">Shop</button>
+  </div>
+</div>
+
+<div class="panel" id="over" hidden>
+  <div class="card">
+    <div class="tag">Score</div>
+    <div class="big" id="final">0</div>
+    <p id="overBest">Best 0</p>
+    <div class="earned" id="earned">+0 ●</div>
+    <button id="again">Play again</button>
+    <button class="ghost" id="skins2">Shop</button>
+  </div>
+</div>
+
+<div class="panel" id="shop" hidden>
+  <div class="card">
+    <h2>Shop</h2>
+    <canvas class="hero" id="hero" width="192" height="192"></canvas>
+    <div class="wallet" id="wallet">● 0</div>
+    <div class="tag sect">Color</div>
+    <div class="grid" id="colorGrid"></div>
+    <div class="tag sect">Shape</div>
+    <div class="grid" id="shapeGrid"></div>
+    <div class="tag sect">Background</div>
+    <div class="grid" id="themeGrid"></div>
+    <div class="toast" id="toast" aria-live="polite"></div>
+    <button id="shopBack">Back</button>
+  </div>
+</div>
+
+
+<script>
+const yt = (typeof ytgame !== "undefined" && ytgame.IN_PLAYABLES_ENV) ? ytgame : null;
+const $ = id => document.getElementById(id);
+const cv = $("c"), ctx = cv.getContext("2d");
+let W, H, cx, cy, R, dpr, LANE;
+function resize(){
+  dpr = Math.min(window.devicePixelRatio||1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = W*dpr; cv.height = H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
+  cx = W/2; cy = H/2 + 20; R = Math.min(165, Math.max(110, Math.min(W, H) * 0.34));
+  LANE = R < 150 ? 36 : 42;   // distance of each lane from the middle ring
+}
+addEventListener("resize", resize); resize();
+
+/* ---------- skins ---------- */
+const COLORS = [
+  {id:"gold",    name:"Gold",    price:0,   col:"#ffd23f"},
+  {id:"mint",    name:"Mint",    price:30,  col:"#7dffb2"},
+  {id:"sky",     name:"Sky",     price:60,  col:"#5cc8ff"},
+  {id:"flame",   name:"Flame",   price:100, col:"#ff8a3d"},
+  {id:"violet",  name:"Violet",  price:150, col:"#b98cff"},
+  {id:"snow",    name:"Snow",    price:220, col:"#ffffff"},
+  {id:"candy",   name:"Candy",   price:300, col:"#ff9ad5"},
+  {id:"ice",     name:"Ice",     price:400, col:"#c4f4ff"},
+  {id:"rainbow", name:"Rainbow", price:600, col:"rainbow"},
+];
+const THEMES = [
+  {id:"night",  name:"Night",     price:0,   bg:"#0b0a1f", bg2:"#1a1640", lane:"#2a2560", tile:"#17143a", deco:"none"},
+  {id:"ocean",  name:"Ocean",     price:80,  bg:"#03192a", bg2:"#0b4a66", lane:"#1f6f8c", tile:"#0a2f44", deco:"bubbles"},
+  {id:"forest", name:"Forest",    price:150, bg:"#06140c", bg2:"#1b4628", lane:"#2e6239", tile:"#0f2817", deco:"fireflies"},
+  {id:"sunset", name:"Sunset",    price:250, bg:"#1f0827", bg2:"#8f2b4a", lane:"#7a2d58", tile:"#341033", deco:"sun"},
+  {id:"space",  name:"Space",     price:350, bg:"#010008", bg2:"#15113d", lane:"#2d2d5c", tile:"#10102a", deco:"stars"},
+  {id:"neon",   name:"Neon Grid", price:500, bg:"#0c0017", bg2:"#2c0049", lane:"#8a2bc2", tile:"#1d0832", deco:"grid"},
+];
+const DOTS = Array.from({length:70}, () => ({x:Math.random(), y:Math.random(), s:Math.random(), p:Math.random()*6.3}));
+function themeOf(id){ return THEMES.find(x => x.id === id) || THEMES[0]; }
+function drawBg(g, w, h, th, t, band){
+  const gr = g.createRadialGradient(w/2, h*0.55, 0, w/2, h*0.55, Math.max(w, h)*0.75);
+  gr.addColorStop(0, th.bg2); gr.addColorStop(1, th.bg);
+  g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  const k = Math.min(w, h) / 400;   // scale decorations to the canvas size
+  g.save();
+  if (th.deco === "stars"){
+    g.fillStyle = "#ffffff";
+    for (const d of DOTS){ g.globalAlpha = 0.3 + 0.7*Math.abs(Math.sin(t/900 + d.p)); g.fillRect(d.x*w, d.y*h, 1 + d.s*2*k, 1 + d.s*2*k); }
+  } else if (th.deco === "bubbles"){
+    // soft, slow bubbles that stay away from the play rings so they never look like spikes or gems
+    g.fillStyle = "#9fe6ff";
+    for (const d of DOTS.slice(0, 26)){
+      const y = ((d.y - t/16000*(0.4 + d.s*0.6)) % 1 + 1) % 1;
+      const bx = d.x*w + Math.sin(t/1400 + d.p)*5*k, by = y*h;
+      if (band){ const dist = Math.hypot(bx - band.x, by - band.y); if (dist > band.r1 && dist < band.r2) continue; }
+      g.globalAlpha = 0.06 + d.s*0.08;
+      g.beginPath(); g.arc(bx, by, (4 + d.s*10)*k, 0, Math.PI*2); g.fill();
+    }
+  } else if (th.deco === "fireflies"){
+    g.fillStyle = "#d8ff6a"; g.shadowColor = "#d8ff6a"; g.shadowBlur = 10*k;
+    for (const d of DOTS.slice(0, 30)){
+      g.globalAlpha = 0.2 + 0.8*Math.max(0, Math.sin(t/600 + d.p*3));
+      g.beginPath(); g.arc(d.x*w + Math.sin(t/2000 + d.p)*25*k, d.y*h + Math.cos(t/2500 + d.p)*20*k, (1.5 + d.s*2)*k, 0, Math.PI*2); g.fill();
+    }
+  } else if (th.deco === "sun"){
+    const r = Math.min(w, h)*0.42, sx = w/2, sy = h*0.9;
+    const sg = g.createLinearGradient(0, sy - r, 0, sy + r);
+    sg.addColorStop(0, "#ffcf5c"); sg.addColorStop(1, "#ff4f7a");
+    g.globalAlpha = 0.28; g.fillStyle = sg; g.beginPath(); g.arc(sx, sy, r, 0, Math.PI*2); g.fill();
+    g.globalAlpha = 1; g.fillStyle = th.bg2;
+    for (let i=0;i<6;i++){ const y = sy - r*0.1 - i*r*0.16; g.globalAlpha = 0.5; g.fillRect(sx - r, y, r*2, 3*k + i*0.6*k); }
+  } else if (th.deco === "grid"){
+    g.strokeStyle = "#d14cff"; g.lineWidth = Math.max(1, k);
+    const hz = h*0.62, off = (t/40 % 40) * k;
+    for (let y = hz + off*0.2, step = 6*k; y < h; step *= 1.25, y += step){ g.globalAlpha = 0.35*(y - hz)/(h - hz) + 0.05; g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); }
+    g.globalAlpha = 0.3;
+    for (let i=-8;i<=8;i++){ g.beginPath(); g.moveTo(w/2 + i*w*0.04, hz); g.lineTo(w/2 + i*w*0.35, h); g.stroke(); }
+  }
+  g.restore();
+}
+function applyTheme(){
+  const th = themeOf(save.theme), st = document.documentElement.style;
+  st.setProperty("--bg", th.bg); st.setProperty("--lane", th.lane); st.setProperty("--tile", th.tile);
+  C.lane = th.lane;
+}
+const SHAPES = [
+  {id:"ball",     name:"Ball",     price:0},
+  {id:"square",   name:"Square",   price:40},
+  {id:"triangle", name:"Triangle", price:80},
+  {id:"diamond",  name:"Diamond",  price:130},
+  {id:"star",     name:"Star",     price:200},
+  {id:"heart",    name:"Heart",    price:350},
+];
+function colorOf(id, t){
+  const c = COLORS.find(c => c.id === id) || COLORS[0];
+  return c.col === "rainbow" ? `hsl(${(t/6)%360} 100% 62%)` : c.col;
+}
+function shapePath(g, shape, s){
+  g.beginPath();
+  if (shape === "square"){ g.roundRect ? g.roundRect(-s*.85, -s*.85, s*1.7, s*1.7, s*.3) : g.rect(-s*.85, -s*.85, s*1.7, s*1.7); }
+  else if (shape === "triangle"){ for (let i=0;i<3;i++){ const a = -Math.PI/2 + i*2*Math.PI/3; g.lineTo(Math.cos(a)*s*1.2, Math.sin(a)*s*1.2); } g.closePath(); }
+  else if (shape === "diamond"){ g.moveTo(0,-s*1.2); g.lineTo(s*.85,0); g.lineTo(0,s*1.2); g.lineTo(-s*.85,0); g.closePath(); }
+  else if (shape === "star"){ for (let i=0;i<10;i++){ const r = i%2 ? s*.5 : s*1.25, a = -Math.PI/2 + i*Math.PI/5; g.lineTo(Math.cos(a)*r, Math.sin(a)*r); } g.closePath(); }
+  else if (shape === "heart"){
+    g.moveTo(0, s*1.05);
+    g.bezierCurveTo(-s*1.6, -s*.1, -s*.8, -s*1.3, 0, -s*.45);
+    g.bezierCurveTo(s*.8, -s*1.3, s*1.6, -s*.1, 0, s*1.05);
+  }
+  else g.arc(0, 0, s, 0, Math.PI*2);
+}
+function drawSkin(g, x, y, size, rot, colorId, shapeId, t, glow=true){
+  const col = colorOf(colorId, t);
+  g.save(); g.translate(x, y); if (shapeId !== "heart") g.rotate(rot);
+  g.fillStyle = col; if (glow){ g.shadowColor = col; g.shadowBlur = size*1.6; }
+  shapePath(g, shapeId, size); g.fill();
+  g.restore();
+}
+
+/* ---------- save ---------- */
+let save = {best:0, day:"", dayBest:0, coins:0, owned:["gold","ball","night"], color:"gold", shape:"ball", theme:"night"};
+async function load(){
+  try{
+    const s = yt ? await yt.game.loadData() : localStorage.getItem("orbitflip");
+    if (s){
+      const d = JSON.parse(s);
+      if (d.gems && d.coins == null) d.coins = d.gems;   // older saves
+      save = Object.assign(save, d);
+      if (!save.owned.includes("night")) save.owned.push("night");
+    }
+  }catch(e){}
+}
+function persist(){
+  const s = JSON.stringify(save);
+  try{ yt ? yt.game.saveData(s) : localStorage.setItem("orbitflip", s); }catch(e){}
+}
+
+/* ---------- audio ---------- */
+let ac = null, muted = false;
+function beep(f, d=0.08, type="sine", v=0.15){
+  if (muted) return;
+  try{
+    ac = ac || new (window.AudioContext||window.webkitAudioContext)();
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = type; o.frequency.value = f; g.gain.value = v;
+    g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + d);
+    o.connect(g).connect(ac.destination); o.start(); o.stop(ac.currentTime + d);
+  }catch(e){}
+}
+
+/* ---------- game state ---------- */
+let grace = 0, state = "menu", angle, speed, lane, laneVis, items, nextSpawn, score, runCoins, revived, deaths = 0, particles = [], shake = 0;
+
+function reset(){
+  angle = 0; speed = 110; lane = 1; laneVis = 1; grace = 0;
+  items = []; nextSpawn = Math.PI; score = 0; runCoins = 0; revived = false; particles = [];
+  updHud();
+}
+function addPoints(n){ score += n; runCoins += n; save.coins += n; updHud(); }
+function spawn(){
+  // only fill about 3/4 of a lap ahead, so next-lap spikes never sit on top of this lap's
+  while (nextSpawn < angle + Math.PI*1.5){
+    // spacing in pixels along the track, shrinking slowly with score
+    const gapPx = Math.max(150, 260 - score*3);
+    const l = Math.random() < .5 ? 1 : -1;
+    const r = Math.random();
+    if (r < 0.15 && score > 15){          // spike pair: flip once between them
+      const off = 170 / R;
+      items.push({a:nextSpawn, lane:l, type:"spike"});
+      items.push({a:nextSpawn + off, lane:-l, type:"spike"});
+      nextSpawn += off;
+    } else if (r < 0.32){
+      items.push({a:nextSpawn, lane:l, type:"gem"});
+    } else {
+      items.push({a:nextSpawn, lane:l, type:"spike"});
+    }
+    nextSpawn += (gapPx / R) * (0.9 + Math.random()*0.4);
+  }
+}
+function flip(){
+  if (state !== "play") return;
+  lane = -lane; beep(lane > 0 ? 660 : 520, 0.06, "triangle");
+}
+function burst(x, y, col, n=14){
+  for (let i=0;i<n;i++){
+    const a = Math.random()*Math.PI*2, s = 60 + Math.random()*160;
+    particles.push({x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:0.6, col});
+  }
+}
+function pos(a, l){ const r = R + l*LANE; return [cx + Math.cos(a)*r, cy + Math.sin(a)*r]; }
+
+function today(){ const d = new Date(); return d.getFullYear() + "-" + (d.getMonth()+1) + "-" + d.getDate(); }
+function todayBest(){ return save.day === today() ? save.dayBest : 0; }
+function updHud(){
+  $("score").textContent = score;
+  $("best").textContent = "Today " + todayBest() + " · Best " + save.best;
+  $("coins").textContent = "● " + save.coins;
+}
+
+function die(){
+  state = "dead"; deaths++; shake = 12;
+  const [px, py] = pos(angle, laneVis);
+  burst(px, py, colorOf(save.color, performance.now()), 26); beep(140, 0.35, "sawtooth", 0.2);
+  if (score > save.best){ save.best = score; }
+  if (save.day !== today()){ save.day = today(); save.dayBest = 0; }
+  const newDay = score > save.dayBest && score > 0;
+  if (newDay) save.dayBest = score;
+  window._newDay = newDay;
+  persist(); updHud();
+  try{ yt && yt.engagement.sendScore({value: score}); }catch(e){}
+  setTimeout(showOver, 550);
+}
+
+function showOver(){
+  $("final").textContent = score;
+  $("overBest").textContent = score >= save.best && score > 0 ? "New best ever!" : window._newDay ? "New best today! · Best " + save.best : "Today " + save.dayBest + " · Best " + save.best;
+  $("earned").textContent = "+" + runCoins + " ●  ·  wallet " + save.coins;
+  $("over").hidden = false;
+}
+
+
+async function startRun(){
+  $("start").hidden = true; $("over").hidden = true; $("shop").hidden = true;
+  reset(); state = "play";
+}
+
+/* ---------- shop ---------- */
+let shopFrom = "start";
+const previews = [];
+function buildGrid(gridId, list, kind){
+  const grid = $(gridId);
+  for (const item of list){
+    const b = document.createElement("button");
+    b.className = "tile"; b.id = "skin-" + item.id;
+    const c = document.createElement("canvas"); c.width = kind === "theme" ? 128 : 96; c.height = c.width;
+    if (kind === "theme") c.className = "bgprev";
+    const n = document.createElement("span"); n.textContent = item.name;
+    const p = document.createElement("span"); p.className = "price";
+    b.append(c, n, p); grid.append(b);
+    previews.push({c, g:c.getContext("2d"), kind, item});
+    b.onclick = () => pick(item, kind, b);
+    item.el = b; item.priceEl = p;
+  }
+}
+function refreshShop(){
+  $("wallet").textContent = "● " + save.coins;
+  for (const [list, kind] of [[COLORS,"color"],[SHAPES,"shape"],[THEMES,"theme"]]){
+    for (const it of list){
+      const owned = save.owned.includes(it.id), on = save[kind] === it.id;
+      it.el.className = "tile" + (owned ? " owned" : "") + (on ? " on" : "") + (!owned && save.coins < it.price ? " locked" : "");
+      it.priceEl.textContent = on ? "Equipped" : owned ? "Owned" : "● " + it.price;
+    }
+  }
+}
+function pick(item, kind, el){
+  $("toast").textContent = "";
+  if (!save.owned.includes(item.id)){
+    if (save.coins < item.price){
+      $("toast").textContent = "You need " + (item.price - save.coins) + " more points";
+      el.classList.remove("nope"); void el.offsetWidth; el.classList.add("nope");
+      beep(200, 0.12, "square", 0.08); return;
+    }
+    save.coins -= item.price; save.owned.push(item.id);
+    beep(990, 0.1, "triangle"); setTimeout(()=>beep(1320, 0.12, "triangle"), 90);
+  } else beep(760, 0.05, "triangle");
+  save[kind] = item.id; if (kind === "theme") applyTheme(); persist(); refreshShop(); updHud();
+}
+function openShop(from){
+  shopFrom = from;
+  $(from).hidden = true; $("toast").textContent = ""; refreshShop(); $("shop").hidden = false;
+}
+function closeShop(){ $("shop").hidden = true; $(shopFrom).hidden = false; }
+buildGrid("colorGrid", COLORS, "color");
+buildGrid("shapeGrid", SHAPES, "shape");
+buildGrid("themeGrid", THEMES, "theme");
+const heroG = $("hero").getContext("2d");
+function drawShop(t){
+  heroG.clearRect(0,0,192,192);
+  drawSkin(heroG, 96, 96, 40, t/700, save.color, save.shape, t);
+  for (const p of previews){
+    if (p.kind === "theme"){
+      drawBg(p.g, 128, 128, p.item, t);
+      p.g.strokeStyle = p.item.lane; p.g.lineWidth = 2;
+      for (const r of [30, 46]){ p.g.beginPath(); p.g.arc(64, 68, r, 0, Math.PI*2); p.g.stroke(); }
+      drawSkin(p.g, 64 + Math.cos(t/900)*46, 68 + Math.sin(t/900)*46, 7, t/300, save.color, save.shape, t, false);
+      continue;
+    }
+    p.g.clearRect(0,0,96,96);
+    const colorId = p.kind === "color" ? p.item.id : save.color;
+    const shapeId = p.kind === "shape" ? p.item.id : save.shape;
+    drawSkin(p.g, 48, 48, 22, 0, colorId, shapeId, t, false);
+  }
+}
+
+/* ---------- input ---------- */
+addEventListener("pointerdown", e => { if (e.target.closest("button")) return; flip(); });
+addEventListener("keydown", e => { if (e.code === "Space" || e.code === "ArrowUp" || e.code === "ArrowDown"){ if (state === "play"){ e.preventDefault(); flip(); } } });
+$("play").onclick = startRun;
+$("again").onclick = startRun;
+$("skins1").onclick = () => openShop("start");
+$("skins2").onclick = () => openShop("over");
+$("shopBack").onclick = closeShop;
+
+/* ---------- loop ---------- */
+function getCss(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+const C = {lane:getCss("--lane"), hazard:getCss("--hazard"), gem:getCss("--gem")};
+let last = performance.now(), paused = false;
+
+function step(dt){
+  if (state === "play"){
+    speed = 110 + Math.min(score*2, 120);   // pixels per second along the ring
+    angle += speed * dt / R;
+    laneVis += (lane - laneVis) * Math.min(1, dt*25);
+    grace = Math.max(0, grace - dt);
+    spawn();
+    const [px, py] = pos(angle, laneVis);
+    for (const it of items){
+      if (it.dead) continue;
+      if (Math.abs(it.a - angle) > 1) { if (it.type === "spike" && !it.passed && it.a < angle - 0.05){ it.passed = true; addPoints(1); } continue; }
+      const [ix, iy] = pos(it.a, it.lane);
+      const d = Math.hypot(px-ix, py-iy);
+      if (it.type === "spike" && d < 13 && grace <= 0){ die(); return; }
+      if (it.type === "gem" && d < 24){ it.dead = true; addPoints(3); burst(ix, iy, C.gem); beep(1040, 0.08); }
+      if (it.type === "spike" && !it.passed && it.a < angle - 0.05){ it.passed = true; addPoints(1); }
+    }
+    items = items.filter(it => !it.dead && it.a > angle - 1);
+  }
+  for (const p of particles){ p.x += p.vx*dt; p.y += p.vy*dt; p.vx *= .94; p.vy *= .94; p.life -= dt; }
+  particles = particles.filter(p => p.life > 0);
+  shake *= 0.88;
+}
+
+function draw(t){
+  drawBg(ctx, W, H, themeOf(save.theme), t, {x:cx, y:cy, r1:R - LANE - 24, r2:R + LANE + 24});
+  ctx.save();
+  if (shake > .5) ctx.translate((Math.random()-.5)*shake, (Math.random()-.5)*shake);
+  // rings
+  ctx.lineWidth = 2; ctx.strokeStyle = C.lane;
+  for (const l of [-1, 1]){ ctx.beginPath(); ctx.arc(cx, cy, R + l*LANE, 0, Math.PI*2); ctx.stroke(); }
+  // center pulse
+  const pulse = 1 + Math.sin(t/300)*0.05;
+  ctx.fillStyle = C.lane; ctx.beginPath(); ctx.arc(cx, cy, R*0.25*pulse, 0, Math.PI*2); ctx.fill();
+  // items
+  for (const it of items){
+    const [x, y] = pos(it.a, it.lane);
+    if (it.type === "spike"){
+      ctx.save(); ctx.translate(x, y); ctx.rotate(it.a + t/400);
+      ctx.fillStyle = C.hazard; ctx.shadowColor = C.hazard; ctx.shadowBlur = 12;
+      ctx.beginPath();
+      for (let i=0;i<8;i++){ const r = i%2 ? 5 : 12, a = i*Math.PI/4; ctx.lineTo(Math.cos(a)*r, Math.sin(a)*r); }
+      ctx.closePath(); ctx.fill(); ctx.restore();
+    } else {
+      ctx.save(); ctx.translate(x, y); ctx.rotate(Math.PI/4);
+      ctx.fillStyle = C.gem; ctx.shadowColor = C.gem; ctx.shadowBlur = 14;
+      ctx.fillRect(-6, -6, 12, 12); ctx.restore();
+    }
+  }
+  // player + trail
+  if (state === "play" || state === "menu"){
+    const a = state === "menu" ? t/900 : angle, l = state === "menu" ? Math.sin(t/500) : laneVis;
+    const col = colorOf(save.color, t);
+    for (let i=6;i>0;i--){
+      const [tx, ty] = pos(a - i*0.035, l);
+      ctx.fillStyle = col; ctx.globalAlpha = 0.08*(7-i);
+      ctx.beginPath(); ctx.arc(tx, ty, 9 - i, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.globalAlpha = (grace > 0 && Math.floor(t/100)%2) ? 0.35 : 1;
+    const [px, py] = pos(a, l);
+    drawSkin(ctx, px, py, 10, a*3, save.color, save.shape, t);
+    ctx.globalAlpha = 1;
+  }
+  for (const p of particles){ ctx.globalAlpha = Math.max(0, p.life/0.6); ctx.fillStyle = p.col; ctx.fillRect(p.x-2, p.y-2, 4, 4); }
+  ctx.globalAlpha = 1; ctx.restore();
+  if (!$("shop").hidden) drawShop(t);
+}
+
+function frame(now){
+  const dt = Math.min(0.033, (now - last)/1000); last = now;
+  if (!paused) step(dt);
+  draw(now);
+  requestAnimationFrame(frame);
+}
+
+/* ---------- YouTube lifecycle ---------- */
+if (yt){
+  yt.system.onPause(()=>{ paused = true; muted = true; });
+  yt.system.onResume(()=>{ paused = false; muted = !yt.system.isAudioEnabled(); last = performance.now(); });
+  try{ yt.system.onAudioEnabledChange(on => { muted = !on; }); muted = !yt.system.isAudioEnabled(); }catch(e){}
+}
+reset();
+requestAnimationFrame(frame);
+try{ yt && yt.game.firstFrameReady(); }catch(e){}
+load().then(()=>{ applyTheme(); updHud(); try{ yt && yt.game.gameReady(); }catch(e){} });
+</script>
+</body></html>
